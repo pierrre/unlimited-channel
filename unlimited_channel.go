@@ -3,6 +3,8 @@ package unlimitedchannel
 
 import (
 	"sync"
+
+	"github.com/pierrre/go-libs/goroutine"
 )
 
 // Channel is an unlimited channel.
@@ -26,9 +28,9 @@ func (c *Channel[T]) init() {
 	// Using buffered channels seems to improve performance.
 	c.in = make(chan T, 10)
 	c.out = make(chan T, 10)
-	go func() {
+	goroutine.Go(func() {
 		c.run()
-	}()
+	})
 }
 
 func (c *Channel[T]) run() {
