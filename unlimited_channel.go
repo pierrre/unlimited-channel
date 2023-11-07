@@ -10,7 +10,7 @@ import (
 // Channel is an unlimited channel.
 // It can store an unlimited number of values.
 //
-// The channel returned by In() must be closed in order to release resources.
+// The channel returned by [Channel.In] must be closed in order to release resources.
 type Channel[T any] struct {
 	once sync.Once
 
