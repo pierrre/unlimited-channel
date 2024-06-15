@@ -2,6 +2,7 @@
 package unlimitedchannel
 
 import (
+	"context"
 	"sync"
 
 	"github.com/pierrre/go-libs/goroutine"
@@ -12,6 +13,10 @@ import (
 //
 // The channel returned by [Channel.In] must be closed in order to release resources.
 type Channel[T any] struct {
+	// Context is the context use to run the internal goroutine.
+	// If not set, context.Background() is used.
+	Context context.Context //nolint:containedctx // It's fine.
+
 	once sync.Once
 
 	queue queue[T]
@@ -28,7 +33,11 @@ func (c *Channel[T]) init() {
 	// Using buffered channels seems to improve performance.
 	c.in = make(chan T, 10)
 	c.out = make(chan T, 10)
-	goroutine.Go(func() {
+	ctx := c.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	goroutine.Go(ctx, func(context.Context) {
 		c.run()
 	})
 }
