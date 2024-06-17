@@ -37,7 +37,7 @@ func (c *Channel[T]) init() {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	goroutine.Go(ctx, func(context.Context) {
+	goroutine.Start(ctx, func(context.Context) {
 		c.run()
 	})
 }
