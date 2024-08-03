@@ -54,11 +54,11 @@ func Benchmark(b *testing.B) {
 			in := c.In()
 			out := c.Out()
 			defer close(in)
-			for i := 0; i < count; i++ {
+			for range count {
 				in <- 1
 			}
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				in <- 1
 				<-out
 			}
