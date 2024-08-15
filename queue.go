@@ -1,22 +1,19 @@
 package unlimitedchannel
 
 import (
-	"sync"
+	"github.com/pierrre/go-libs/syncutil"
 )
 
 type queue[T any] struct {
 	head *queueElement[T]
 	tail *queueElement[T]
 
-	elemPool sync.Pool
+	elemPool syncutil.PoolFor[queueElement[T]]
 }
 
 func (q *queue[T]) enqueue(value T) {
-	newElemItf := q.elemPool.Get()
-	var newElem *queueElement[T]
-	if newElemItf != nil {
-		newElem = newElemItf.(*queueElement[T]) //nolint:forcetypeassert // The pool only contains *queueElement[T].
-	} else {
+	newElem := q.elemPool.Get()
+	if newElem == nil {
 		newElem = &queueElement[T]{}
 	}
 	newElem.value = value
