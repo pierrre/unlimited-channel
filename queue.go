@@ -8,7 +8,7 @@ type queue[T any] struct {
 	head *queueElement[T]
 	tail *queueElement[T]
 
-	elemPool syncutil.PoolForNotPointer[*queueElement[T]]
+	elemPool syncutil.PoolFor[*queueElement[T]]
 }
 
 func (q *queue[T]) enqueue(value T) {
