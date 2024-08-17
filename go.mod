@@ -8,6 +8,6 @@ require (
 )
 
 require (
-	github.com/pierrre/compare v1.4.8 // indirect
-	github.com/pierrre/pretty v0.3.5 // indirect
+	github.com/pierrre/compare v1.4.9 // indirect
+	github.com/pierrre/pretty v0.3.6 // indirect
 )
