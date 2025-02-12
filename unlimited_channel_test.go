@@ -57,8 +57,7 @@ func Benchmark(b *testing.B) {
 			for range count {
 				in <- 1
 			}
-			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				in <- 1
 				<-out
 			}
