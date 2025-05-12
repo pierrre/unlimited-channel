@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pierrre/assert"
 )
 
 func Example() {
-	c := new(Channel[int])
-	in := c.In()
-	out := c.Out()
+	in, out := New[int]()
 	in <- 1
 	in <- 2
 	v := <-out
@@ -28,9 +27,7 @@ func Example() {
 }
 
 func Test(t *testing.T) {
-	c := new(Channel[int])
-	in := c.In()
-	out := c.Out()
+	in, out := New[int](WithContext(t.Context()))
 	in <- 1
 	in <- 2
 	v := <-out
@@ -47,20 +44,55 @@ func Test(t *testing.T) {
 	assert.Equal(t, ok, false)
 }
 
+func TestCloseRemaining(t *testing.T) {
+	in, out := New[int](WithBuffer(0), WithSendAllOnClose(false))
+	for range 10 {
+		in <- 1
+	}
+	close(in)
+	count := 0
+	for range out {
+		count++
+	}
+	assert.Less(t, count, 10)
+}
+
+func TestCloseSendAll(t *testing.T) {
+	in, out := New[int](WithBuffer(0), WithSendAllOnClose(true))
+	for range 10 {
+		in <- 1
+	}
+	close(in)
+	count := 0
+	for range out {
+		count++
+	}
+	assert.Equal(t, count, 10)
+}
+
+func TestSlowReceiver(t *testing.T) {
+	in, out := New[int](WithBuffer(0))
+	in <- 1
+	time.Sleep(1 * time.Millisecond)
+	<-out
+	close(in)
+}
+
 func Benchmark(b *testing.B) {
 	for _, count := range []int{0, 1, 10, 100, 1000} {
 		b.Run(strconv.Itoa(count), func(b *testing.B) {
-			c := new(Channel[int])
-			in := c.In()
-			out := c.Out()
+			in, out := New[int]()
 			defer close(in)
 			for range count {
 				in <- 1
 			}
-			for b.Loop() {
-				in <- 1
-				<-out
-			}
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					in <- 1
+					<-out
+				}
+			})
 		})
 	}
 }

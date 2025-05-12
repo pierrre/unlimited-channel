@@ -44,19 +44,6 @@ func (q *queue[T]) dequeue() (T, bool) {
 	return value, true
 }
 
-func (q *queue[T]) pick() (T, bool) {
-	if q.head == nil {
-		var value T
-		return value, false
-	}
-	return q.head.value, true
-}
-
-func (q *queue[T]) reset() {
-	q.head = nil
-	q.tail = nil
-}
-
 type queueElement[T any] struct {
 	value T
 	next  *queueElement[T]
