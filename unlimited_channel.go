@@ -29,15 +29,29 @@ func New[T any](opts ...Option) (input chan<- T, output <-chan T) {
 func run[T any](in <-chan T, out chan<- T, sendAllOnClose bool) { //nolint:gocyclo // Yes it's complex.
 	defer close(out)
 	q := new(queue[T])
-	inOK := true // Indicates if the input channel is open.
+	var inValue T
+	inOpen := true      // Indicates if the input channel is open.
+	inReceived := false // Indicate if the input channel received something (a value or closed).
 	var outValue T
 	outOK := false // Indicates if the output value is set.
+	var zero T
 	for {
-		var inValue T
+		if inReceived { // If the input channel received something (a value or closed).
+			inReceived = false
+			if inOpen { // If the input channel is open, a value was received.
+				if !outOK { // If the output value is not set.
+					outValue = inValue // Set the output value with the input value,  without adding it to the queue.
+					inValue = zero
+					outOK = true
+				} else {
+					q.enqueue(inValue) // Add the input value to the queue.
+				}
+			}
+		}
 		if !outOK { // If the output value is not set.
 			outValue, outOK = q.dequeue()
 		}
-		if !inOK { // If the input channel is closed.
+		if !inOpen { // If the input channel is closed.
 			if !outOK { // If there is no more value to send to the output channel.
 				return
 			}
@@ -49,41 +63,31 @@ func run[T any](in <-chan T, out chan<- T, sendAllOnClose bool) { //nolint:gocyc
 			continue
 		}
 		if !outOK { // If there is no value to send to the output channel.
-			inValue, inOK = <-in // Try to receive a value from the input channel.
-			handleInput(inValue, inOK, &outValue, &outOK, q)
+			inValue, inOpen = <-in // Try to receive a value from the input channel.
+			inReceived = true
 			continue
 		}
 		select { // Try to send the value to the output channel, before receiving a value from the input channel.
 		case out <- outValue:
+			outValue = zero
 			outOK = false
 			continue
 		default: // The output channel was not ready.
 		}
 		select { // Try to receive a value from the input channel.
-		case inValue, inOK = <-in:
-			handleInput(inValue, inOK, &outValue, &outOK, q)
+		case inValue, inOpen = <-in:
+			inReceived = true
 			continue
-		default:
+		default: // The input channel was not ready.
 		}
 		select { // Try to receive a value from the input channel, or send the value to the output channel.
-		case inValue, inOK = <-in:
-			handleInput(inValue, inOK, &outValue, &outOK, q)
+		case inValue, inOpen = <-in:
+			inReceived = true
 		case out <- outValue:
+			outValue = zero
 			outOK = false
 		}
 	}
-}
-
-func handleInput[T any](inValue T, inOK bool, pOutValue *T, pOutOK *bool, q *queue[T]) {
-	if !inOK { // If the input channel is closed.
-		return
-	}
-	if !*pOutOK { // If the output value is not set.
-		*pOutValue = inValue // Set the output value without adding it to the queue.
-		*pOutOK = true
-		return
-	}
-	q.enqueue(inValue) // Add the input value to the queue.
 }
 
 type options struct {
