@@ -26,7 +26,7 @@ func New[T any](opts ...Option) (input chan<- T, output <-chan T) {
 	return in, out
 }
 
-func run[T any](in <-chan T, out chan<- T, sendAllOnClose bool) {
+func run[T any](in <-chan T, out chan<- T, sendAllOnClose bool) { //nolint:gocyclo // Yes it's complex.
 	defer close(out)
 	q := new(queue[T])
 	inOK := true // Indicates if the input channel is open.
@@ -58,6 +58,12 @@ func run[T any](in <-chan T, out chan<- T, sendAllOnClose bool) {
 			outOK = false
 			continue
 		default: // The output channel was not ready.
+		}
+		select { // Try to receive a value from the input channel.
+		case inValue, inOK = <-in:
+			handleInput(inValue, inOK, &outValue, &outOK, q)
+			continue
+		default:
 		}
 		select { // Try to receive a value from the input channel, or send the value to the output channel.
 		case inValue, inOK = <-in:
