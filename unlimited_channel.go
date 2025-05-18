@@ -1,4 +1,4 @@
-// Package unlimitedchannel provides an unlimited channel.
+// Package unlimitedchannel provides a channel with unlimited capacity.
 package unlimitedchannel
 
 import (
@@ -9,6 +9,7 @@ import (
 
 // New creates a new channel with unlimited capacity.
 // It stores values in an in-memory queue.
+// Sending values to the input channel is non-blocking.
 //
 // The caller must close the input channel when it is no longer needed, in order to release resources.
 // Closing the input channel will close the output channel.
