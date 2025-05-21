@@ -45,7 +45,14 @@ func New[T any](opts ...Option) *Channel[T] {
 	}
 	goroutine.Start(ctx, func(ctx context.Context) {
 		defer close(c.out)
-		c.worker.run()
+		f := func(ctx context.Context) {
+			c.worker.run()
+		}
+		if o.workers > 1 {
+			goroutine.N(ctx, o.workers, f)
+		} else {
+			f(ctx)
+		}
 	})
 	return c
 }
@@ -173,12 +180,14 @@ type options struct {
 	context        context.Context //nolint:containedctx // It's OK.
 	sendAllOnClose bool
 	buffer         int
+	workers        int
 	release        *func()
 }
 
 func buildOptions(opts []Option) *options {
 	o := &options{
-		buffer: 100,
+		buffer:  100,
+		workers: 1,
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -214,6 +223,15 @@ func WithSendAllOnClose(send bool) Option {
 func WithBuffer(buffer int) Option {
 	return func(o *options) {
 		o.buffer = buffer
+	}
+}
+
+// WithWorkers sets the number of workers to run.
+// The default value is 1.
+// Values lower than 1 are equivalent to 1.
+func WithWorkers(workers int) Option {
+	return func(o *options) {
+		o.workers = workers
 	}
 }
 

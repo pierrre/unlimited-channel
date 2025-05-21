@@ -119,6 +119,20 @@ func TestSlowReceiver(t *testing.T) {
 	<-out
 }
 
+func TestWithWorkers(t *testing.T) {
+	c := New[int](WithBuffer(0), WithSendAllOnClose(true), WithWorkers(10))
+	in, out := c.Input(), c.Output()
+	for range 10 {
+		in <- 1
+	}
+	close(in)
+	count := 0
+	for range out {
+		count++
+	}
+	assert.Equal(t, count, 10)
+}
+
 func TestWithRelease(t *testing.T) {
 	c := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(true))
 	in := c.Input()
@@ -182,6 +196,26 @@ func BenchmarkWithBuffer(b *testing.B) {
 		b.Run(strconv.Itoa(buffer), func(b *testing.B) {
 			c := newTestChannel(b, WithBuffer(buffer))
 			in, out := c.Input(), c.Output()
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				in <- 1
+				for pb.Next() {
+					in <- 1
+					<-out
+				}
+			})
+		})
+	}
+}
+
+func BenchmarkWithWorkers(b *testing.B) {
+	for _, workers := range []int{1, 2, 4, 8, 16} {
+		b.Run(strconv.Itoa(workers), func(b *testing.B) {
+			c := newTestChannel(b, WithWorkers(workers))
+			in, out := c.Input(), c.Output()
+			for range workers {
+				in <- 1
+			}
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				in <- 1
