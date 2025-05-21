@@ -15,8 +15,9 @@ import (
 // The output channel will be closed when all the resources have been released.
 func New[T any](opts ...Option) (input chan<- T, output <-chan T) {
 	o := buildOptions(opts)
-	in := make(chan T, o.buffer)
-	out := make(chan T, o.buffer)
+	buffer := max(0, o.buffer)
+	in := make(chan T, buffer)
+	out := make(chan T, buffer)
 	ctx := o.context
 	if ctx == nil {
 		ctx = context.Background()
@@ -99,7 +100,7 @@ type options struct {
 
 func buildOptions(opts []Option) *options {
 	o := &options{
-		buffer: 10,
+		buffer: 100,
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -121,6 +122,7 @@ func WithContext(ctx context.Context) Option {
 }
 
 // WithSendAllOnClose sets the option to send all remaining values before closing the output channel.
+// The default value is false, which means that the output channel will be closed as soon as the input channel is closed, without sending the remaining values.
 // If true, all values from the output channel must be read until it is closed, in order to release resources.
 func WithSendAllOnClose(send bool) Option {
 	return func(o *options) {
@@ -129,7 +131,8 @@ func WithSendAllOnClose(send bool) Option {
 }
 
 // WithBuffer sets the buffer size of the input/output channels.
-// The default value is 10, and offers better performance than 0.
+// The default value is 100, and offers better performance than 0 (unbuffered).
+// A negative value is equivalent to 0.
 func WithBuffer(buffer int) Option {
 	return func(o *options) {
 		o.buffer = buffer
