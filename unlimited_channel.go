@@ -11,8 +11,8 @@ import (
 // It stores values in an in-memory queue.
 // Sending values to the input channel is non-blocking.
 //
-// The caller must close the input channel when it is no longer needed, in order to release resources.
-// Closing the input channel will close the output channel.
+// The caller must close the input channel, in order to release resources.
+// The output channel will be closed when all the resources have been released.
 func New[T any](opts ...Option) (input chan<- T, output <-chan T) {
 	o := buildOptions(opts)
 	in := make(chan T, o.buffer)
