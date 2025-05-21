@@ -2,7 +2,6 @@ package unlimitedchannel
 
 import (
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -79,20 +78,41 @@ func TestSlowReceiver(t *testing.T) {
 }
 
 func Benchmark(b *testing.B) {
-	for _, count := range []int{0, 1, 10, 100, 1000} {
-		b.Run(strconv.Itoa(count), func(b *testing.B) {
-			in, out := New[int]()
-			defer close(in)
-			for range count {
-				in <- 1
-			}
-			b.ResetTimer()
-			b.RunParallel(func(pb *testing.PB) {
-				for pb.Next() {
-					in <- 1
-					<-out
-				}
-			})
-		})
+	in, out := New[int]()
+	defer close(in)
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			in <- 1
+			<-out
+		}
+	})
+}
+
+func BenchmarkWithElements(b *testing.B) {
+	in, out := New[int]()
+	defer close(in)
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		in <- 1
+		for pb.Next() {
+			in <- 1
+			<-out
+		}
+	})
+}
+
+func BenchmarkWithManyElements(b *testing.B) {
+	in, out := New[int]()
+	defer close(in)
+	for range 10000 {
+		in <- 1
 	}
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			in <- 1
+			<-out
+		}
+	})
 }
