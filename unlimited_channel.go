@@ -122,7 +122,7 @@ func (c *Channel[T]) run() { //nolint:gocyclo // Yes it's complex.
 
 func (c *Channel[T]) release() {
 	inClosed := false
-	for !inClosed { // Drain the input channel, and wa
+	for !inClosed { // Drain the input channel, and ensure it is closed.
 		select {
 		case _, ok := <-c.in:
 			if !ok {
@@ -132,7 +132,7 @@ func (c *Channel[T]) release() {
 			close(c.in)
 		}
 	}
-	for range c.out {
+	for range c.out { // Drain the output channel until it is closed.
 	}
 }
 
