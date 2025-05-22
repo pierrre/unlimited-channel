@@ -3,6 +3,7 @@ package unlimitedchannel
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pierrre/go-libs/goroutine"
 )
@@ -25,6 +26,11 @@ func New[T any](opts ...Option) (input chan<- T, output <-chan T) {
 	goroutine.Start(ctx, func(ctx context.Context) {
 		run(in, out, o.sendAllOnClose)
 	})
+	if o.release != nil {
+		*o.release = sync.OnceFunc(func() {
+			release(in, out)
+		})
+	}
 	return in, out
 }
 
@@ -92,10 +98,27 @@ func run[T any](in <-chan T, out chan<- T, sendAllOnClose bool) { //nolint:gocyc
 	}
 }
 
+func release[T any](in chan T, out chan T) {
+	inClosed := false
+	for !inClosed {
+		select {
+		case _, ok := <-in:
+			if !ok {
+				inClosed = true
+			}
+		default:
+			close(in)
+		}
+	}
+	for range out {
+	}
+}
+
 type options struct {
 	context        context.Context //nolint:containedctx // It's OK.
 	sendAllOnClose bool
 	buffer         int
+	release        *func()
 }
 
 func buildOptions(opts []Option) *options {
@@ -136,5 +159,11 @@ func WithSendAllOnClose(send bool) Option {
 func WithBuffer(buffer int) Option {
 	return func(o *options) {
 		o.buffer = buffer
+	}
+}
+
+func withRelease(release *func()) Option {
+	return func(o *options) {
+		o.release = release
 	}
 }

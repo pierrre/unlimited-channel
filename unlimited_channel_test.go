@@ -2,6 +2,7 @@ package unlimitedchannel
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -28,17 +29,14 @@ func Example() {
 
 func newTestChannel(tb testing.TB, opts ...Option) (in chan<- int, out <-chan int) {
 	tb.Helper()
-	in, out = New[int](opts...)
-	tb.Cleanup(func() {
-		close(in)
-		for range out {
-		}
-	})
+	var release func()
+	in, out = New[int](slices.Concat([]Option{withRelease(&release)}, opts)...)
+	tb.Cleanup(release)
 	return in, out
 }
 
 func Test(t *testing.T) {
-	in, out := New[int](WithContext(t.Context()))
+	in, out := newTestChannel(t, WithContext(t.Context()))
 	in <- 1
 	in <- 2
 	v := <-out
@@ -56,7 +54,7 @@ func Test(t *testing.T) {
 }
 
 func TestCloseRemaining(t *testing.T) {
-	in, out := New[int](WithBuffer(0), WithSendAllOnClose(false))
+	in, out := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(false))
 	for range 10 {
 		in <- 1
 	}
@@ -69,7 +67,7 @@ func TestCloseRemaining(t *testing.T) {
 }
 
 func TestCloseSendAll(t *testing.T) {
-	in, out := New[int](WithBuffer(0), WithSendAllOnClose(true))
+	in, out := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(true))
 	for range 10 {
 		in <- 1
 	}
@@ -83,7 +81,7 @@ func TestCloseSendAll(t *testing.T) {
 
 func TestWithBuffer(t *testing.T) {
 	size := 1000
-	in, out := New[int](WithBuffer(size))
+	in, out := newTestChannel(t, WithBuffer(size))
 	for range size {
 		in <- 1
 	}
@@ -96,7 +94,7 @@ func TestWithBuffer(t *testing.T) {
 }
 
 func TestWithBufferNegative(t *testing.T) {
-	in, out := New[int](WithBuffer(-1))
+	in, out := newTestChannel(t, WithBuffer(-1))
 	in <- 1
 	close(in)
 	count := 0
@@ -111,6 +109,11 @@ func TestSlowReceiver(t *testing.T) {
 	in <- 1
 	time.Sleep(1 * time.Millisecond)
 	<-out
+}
+
+func TestWithRelease(t *testing.T) {
+	in, _ := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(true))
+	in <- 1
 }
 
 func Benchmark(b *testing.B) {
