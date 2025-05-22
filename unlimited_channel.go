@@ -20,6 +20,7 @@ type Channel[T any] struct {
 	in             chan T
 	out            chan T
 	sendAllOnClose bool
+	worker         *worker[T]
 }
 
 // New creates a new [Channel].
@@ -31,19 +32,20 @@ func New[T any](opts ...Option) *Channel[T] {
 		out:            make(chan T, buffer),
 		sendAllOnClose: o.sendAllOnClose,
 	}
+	c.worker = newWorker(c)
+	if o.release != nil {
+		*o.release = sync.OnceFunc(func() {
+			c.release()
+		})
+	}
 	ctx := o.context
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	goroutine.Start(ctx, func(ctx context.Context) {
 		defer close(c.out)
-		c.run()
+		c.worker.run()
 	})
-	if o.release != nil {
-		*o.release = sync.OnceFunc(func() {
-			c.release()
-		})
-	}
 	return c
 }
 
@@ -55,69 +57,6 @@ func (c *Channel[T]) Input() chan<- T {
 // Output returns the output channel.
 func (c *Channel[T]) Output() <-chan T {
 	return c.out
-}
-
-func (c *Channel[T]) run() { //nolint:gocyclo // Yes it's complex.
-	q := new(queue[T])
-	var inValue T
-	inOpen := true      // Indicates if the input channel is open.
-	inReceived := false // Indicate if the input channel received something (a value or closed).
-	var outValue T
-	outOK := false // Indicates if the output value is set.
-	var zero T
-	for {
-		if inReceived { // If the input channel received something (a value or closed).
-			inReceived = false
-			if inOpen { // If the input channel is open, a value was received.
-				if !outOK { // If the output value is not set.
-					outValue = inValue // Set the output value with the input value,  without adding it to the queue.
-					outOK = true
-				} else {
-					q.enqueue(inValue) // Add the input value to the queue.
-				}
-				inValue = zero
-			}
-		}
-		if !outOK { // If the output value is not set.
-			outValue, outOK = q.dequeue() // Try to get a value from the queue.
-		}
-		if !inOpen { // If the input channel is closed.
-			if !outOK { // If there is no more value to send to the output channel.
-				return
-			}
-			if !c.sendAllOnClose { // If we don't need to send all remaining values to the output channel.
-				return
-			}
-			c.out <- outValue // Send the remaining values to the output channel.
-			outOK = false
-			continue
-		}
-		if !outOK { // If there is no value to send to the output channel.
-			inValue, inOpen = <-c.in // Try to receive a value from the input channel.
-			inReceived = true
-			continue
-		}
-		select { // Try to send the value to the output channel, before receiving a value from the input channel.
-		case c.out <- outValue:
-			outValue = zero
-			outOK = false
-			continue
-		default: // The output channel was not ready.
-		}
-		select { // Try to receive a value from the input channel.
-		case inValue, inOpen = <-c.in:
-			inReceived = true
-			continue
-		default: // The input channel was not ready.
-		}
-		select { // Try to receive a value from the input channel, or send the value to the output channel.
-		case inValue, inOpen = <-c.in:
-			inReceived = true
-		case c.out <- outValue:
-			outValue = zero
-			outOK = false
-		}
-	}
 }
 
 func (c *Channel[T]) release() {
@@ -133,6 +72,82 @@ func (c *Channel[T]) release() {
 		}
 	}
 	for range c.out { // Drain the output channel until it is closed.
+	}
+}
+
+type worker[T any] struct {
+	channel *Channel[T]
+}
+
+func newWorker[T any](c *Channel[T]) *worker[T] {
+	return &worker[T]{
+		channel: c,
+	}
+}
+
+func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
+	q := new(queue[T])
+	in := w.channel.in
+	var inValue T
+	inOpen := true      // Indicates if the input channel is open.
+	inReceived := false // Indicate if the input channel received something (a value or closed).
+	out := w.channel.out
+	var outValue T
+	outValueOK := false // Indicates if the output value is set.
+	sendAllOnClose := w.channel.sendAllOnClose
+	var zero T
+	for {
+		if inReceived { // If the input channel received something (a value or closed).
+			inReceived = false
+			if inOpen { // If the input channel is open, a value was received.
+				if !outValueOK { // If the output value is not set.
+					outValue = inValue // Set the output value with the input value,  without adding it to the queue.
+					outValueOK = true
+				} else {
+					q.enqueue(inValue) // Add the input value to the queue.
+				}
+				inValue = zero
+			}
+		}
+		if !outValueOK { // If the output value is not set.
+			outValue, outValueOK = q.dequeue() // Try to get a value from the queue.
+		}
+		if !inOpen { // If the input channel is closed.
+			if !outValueOK { // If there is no more value to send to the output channel.
+				return
+			}
+			if !sendAllOnClose { // If we don't need to send all remaining values to the output channel.
+				return
+			}
+			out <- outValue // Send the remaining values to the output channel.
+			outValueOK = false
+			continue
+		}
+		if !outValueOK { // If there is no value to send to the output channel.
+			inValue, inOpen = <-in // Try to receive a value from the input channel.
+			inReceived = true
+			continue
+		}
+		select { // Try to send the value to the output channel, before receiving a value from the input channel.
+		case out <- outValue:
+			outValue = zero
+			outValueOK = false
+			continue
+		default: // The output channel was not ready.
+		}
+		select { // Try to receive a value from the input channel.
+		case inValue, inOpen = <-in:
+			inReceived = true
+			continue
+		default: // The input channel was not ready.
+		}
+		select { // Try to receive a value from the input channel, or send the value to the output channel.
+		case inValue, inOpen = <-in:
+			inReceived = true
+		case out <- outValue:
+			outValue = zero
+			outValueOK = false
+		}
 	}
 }
 
