@@ -91,14 +91,20 @@ func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
 	out := w.channel.out
 	var outValue T
 	outValueOK := false // Indicates if the output value is set.
+	outSent := false    // Indicates if the output value was sent to the output channel.
 	sendAllOnClose := w.channel.sendAllOnClose
 	var zero T
 	for {
+		if outSent { // If the output value was sent to the output channel.
+			outSent = false
+			outValue = zero // Reset the output value.
+			outValueOK = false
+		}
 		if inReceived { // If the input channel received something (a value or closed).
 			inReceived = false
 			if inOpen { // If the input channel is open, a value was received.
 				if !outValueOK { // If the output value is not set.
-					outValue = inValue // Set the output value with the input value,  without adding it to the queue.
+					outValue = inValue // Set the output value with the input value, without adding it to the queue.
 					outValueOK = true
 				} else {
 					q.enqueue(inValue) // Add the input value to the queue.
@@ -117,7 +123,7 @@ func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
 				return
 			}
 			out <- outValue // Send the remaining values to the output channel.
-			outValueOK = false
+			outSent = true
 			continue
 		}
 		if !outValueOK { // If there is no value to send to the output channel.
@@ -127,8 +133,7 @@ func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
 		}
 		select { // Try to send the value to the output channel, before receiving a value from the input channel.
 		case out <- outValue:
-			outValue = zero
-			outValueOK = false
+			outSent = true
 			continue
 		default: // The output channel was not ready.
 		}
@@ -142,8 +147,7 @@ func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
 		case inValue, inOpen = <-in:
 			inReceived = true
 		case out <- outValue:
-			outValue = zero
-			outValueOK = false
+			outSent = true
 		}
 	}
 }
