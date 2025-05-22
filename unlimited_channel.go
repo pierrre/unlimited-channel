@@ -49,15 +49,15 @@ func run[T any](in <-chan T, out chan<- T, sendAllOnClose bool) { //nolint:gocyc
 			if inOpen { // If the input channel is open, a value was received.
 				if !outOK { // If the output value is not set.
 					outValue = inValue // Set the output value with the input value,  without adding it to the queue.
-					inValue = zero
 					outOK = true
 				} else {
 					q.enqueue(inValue) // Add the input value to the queue.
 				}
+				inValue = zero
 			}
 		}
 		if !outOK { // If the output value is not set.
-			outValue, outOK = q.dequeue()
+			outValue, outOK = q.dequeue() // Try to get a value from the queue.
 		}
 		if !inOpen { // If the input channel is closed.
 			if !outOK { // If there is no more value to send to the output channel.
