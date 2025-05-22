@@ -26,6 +26,17 @@ func Example() {
 	// open: false
 }
 
+func newTestChannel(tb testing.TB, opts ...Option) (in chan<- int, out <-chan int) {
+	tb.Helper()
+	in, out = New[int](opts...)
+	tb.Cleanup(func() {
+		close(in)
+		for range out {
+		}
+	})
+	return in, out
+}
+
 func Test(t *testing.T) {
 	in, out := New[int](WithContext(t.Context()))
 	in <- 1
@@ -96,16 +107,14 @@ func TestWithBufferNegative(t *testing.T) {
 }
 
 func TestSlowReceiver(t *testing.T) {
-	in, out := New[int](WithBuffer(0))
+	in, out := newTestChannel(t, WithBuffer(0))
 	in <- 1
 	time.Sleep(1 * time.Millisecond)
 	<-out
-	close(in)
 }
 
 func Benchmark(b *testing.B) {
-	in, out := New[int]()
-	defer close(in)
+	in, out := newTestChannel(b)
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		in <- 1
@@ -117,8 +126,7 @@ func Benchmark(b *testing.B) {
 }
 
 func BenchmarkEmpty(b *testing.B) {
-	in, out := New[int]()
-	defer close(in)
+	in, out := newTestChannel(b)
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -129,8 +137,7 @@ func BenchmarkEmpty(b *testing.B) {
 }
 
 func BenchmarkEmptyNoBuffer(b *testing.B) {
-	in, out := New[int](WithBuffer(0))
-	defer close(in)
+	in, out := newTestChannel(b, WithBuffer(0))
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -141,8 +148,7 @@ func BenchmarkEmptyNoBuffer(b *testing.B) {
 }
 
 func BenchmarkWithManyElements(b *testing.B) {
-	in, out := New[int]()
-	defer close(in)
+	in, out := newTestChannel(b)
 	for range 10000 {
 		in <- 1
 	}
@@ -158,8 +164,7 @@ func BenchmarkWithManyElements(b *testing.B) {
 func BenchmarkWithBuffer(b *testing.B) {
 	for _, buffer := range []int{0, 1, 2, 4, 8, 16, 32, 64, 128} {
 		b.Run(strconv.Itoa(buffer), func(b *testing.B) {
-			in, out := New[int](WithBuffer(buffer))
-			defer close(in)
+			in, out := newTestChannel(b, WithBuffer(buffer))
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				in <- 1
