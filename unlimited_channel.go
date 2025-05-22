@@ -60,13 +60,10 @@ func (c *Channel[T]) Output() <-chan T {
 }
 
 func (c *Channel[T]) release() {
-	inClosed := false
-	for !inClosed { // Drain the input channel, and ensure it is closed.
+	inOpen := true
+	for inOpen { // Drain the input channel, and ensure it is closed.
 		select {
-		case _, ok := <-c.in:
-			if !ok {
-				inClosed = true
-			}
+		case _, inOpen = <-c.in:
 		default:
 			close(c.in)
 		}
