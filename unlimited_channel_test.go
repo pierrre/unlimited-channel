@@ -39,12 +39,17 @@ func newTestChannel(tb testing.TB, opts ...Option) *Channel[int] {
 func Test(t *testing.T) {
 	c := newTestChannel(t, WithContext(t.Context()))
 	in, out := c.Input(), c.Output()
+	assert.Equal(t, c.Len(), 0)
 	in <- 1
+	assert.Equal(t, c.Len(), 1)
 	in <- 2
+	assert.Equal(t, c.Len(), 2)
 	v := <-out
 	assert.Equal(t, v, 1)
+	assert.Equal(t, c.Len(), 1)
 	v = <-out
 	assert.Equal(t, v, 2)
+	assert.Equal(t, c.Len(), 0)
 	select {
 	case <-out:
 		t.Fatal("should not be here")
@@ -53,6 +58,7 @@ func Test(t *testing.T) {
 	close(in)
 	_, ok := <-out
 	assert.Equal(t, ok, false)
+	assert.Equal(t, c.Len(), 0)
 }
 
 func TestCloseRemaining(t *testing.T) {
@@ -67,6 +73,8 @@ func TestCloseRemaining(t *testing.T) {
 		count++
 	}
 	assert.Less(t, count, 10)
+	assert.Greater(t, c.Len(), 0)
+	assert.Less(t, c.Len(), 10)
 }
 
 func TestCloseSendAll(t *testing.T) {
@@ -81,6 +89,7 @@ func TestCloseSendAll(t *testing.T) {
 		count++
 	}
 	assert.Equal(t, count, 10)
+	assert.Equal(t, c.Len(), 0)
 }
 
 func TestWithBuffer(t *testing.T) {

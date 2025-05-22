@@ -4,6 +4,7 @@ package unlimitedchannel
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pierrre/go-libs/goroutine"
 )
@@ -59,6 +60,14 @@ func (c *Channel[T]) Output() <-chan T {
 	return c.out
 }
 
+// Len returns the length of the channel.
+func (c *Channel[T]) Len() int {
+	l := len(c.out)
+	l += c.worker.len()
+	l += len(c.in)
+	return l
+}
+
 func (c *Channel[T]) release() {
 	inOpen := true
 	for inOpen { // Drain the input channel, and ensure it is closed.
@@ -74,12 +83,17 @@ func (c *Channel[T]) release() {
 
 type worker[T any] struct {
 	channel *Channel[T]
+	length  int64
 }
 
 func newWorker[T any](c *Channel[T]) *worker[T] {
 	return &worker[T]{
 		channel: c,
 	}
+}
+
+func (w *worker[T]) len() int {
+	return int(atomic.LoadInt64(&w.length))
 }
 
 func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
@@ -92,6 +106,7 @@ func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
 	var outValue T
 	outValueOK := false // Indicates if the output value is set.
 	outSent := false    // Indicates if the output value was sent to the output channel.
+	pLength := &w.length
 	sendAllOnClose := w.channel.sendAllOnClose
 	var zero T
 	for {
@@ -99,6 +114,7 @@ func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
 			outSent = false
 			outValue = zero // Reset the output value.
 			outValueOK = false
+			atomic.AddInt64(pLength, -1)
 		}
 		if inReceived { // If the input channel received something (a value or closed).
 			inReceived = false
@@ -110,6 +126,7 @@ func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
 					q.enqueue(inValue) // Add the input value to the queue.
 				}
 				inValue = zero
+				atomic.AddInt64(pLength, 1)
 			}
 		}
 		if !outValueOK { // If the output value is not set.
