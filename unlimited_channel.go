@@ -8,34 +8,56 @@ import (
 	"github.com/pierrre/go-libs/goroutine"
 )
 
-// New creates a new channel with unlimited capacity.
+// Channel is a channel with unlimited capacity
 // It stores values in an in-memory queue.
 // Sending values to the input channel is non-blocking.
 //
-// The caller must close the input channel, in order to release resources.
+// The input channel must be closed, in order to release resources.
 // The output channel will be closed when all the resources have been released.
-func New[T any](opts ...Option) (input chan<- T, output <-chan T) {
+//
+// It must be created with [New].
+type Channel[T any] struct {
+	in             chan T
+	out            chan T
+	sendAllOnClose bool
+}
+
+// New creates a new [Channel].
+func New[T any](opts ...Option) *Channel[T] {
 	o := buildOptions(opts)
 	buffer := max(0, o.buffer)
-	in := make(chan T, buffer)
-	out := make(chan T, buffer)
+	c := &Channel[T]{
+		in:             make(chan T, buffer),
+		out:            make(chan T, buffer),
+		sendAllOnClose: o.sendAllOnClose,
+	}
 	ctx := o.context
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	goroutine.Start(ctx, func(ctx context.Context) {
-		run(in, out, o.sendAllOnClose)
+		defer close(c.out)
+		c.run()
 	})
 	if o.release != nil {
 		*o.release = sync.OnceFunc(func() {
-			release(in, out)
+			c.release()
 		})
 	}
-	return in, out
+	return c
 }
 
-func run[T any](in <-chan T, out chan<- T, sendAllOnClose bool) { //nolint:gocyclo // Yes it's complex.
-	defer close(out)
+// Input returns the input channel.
+func (c *Channel[T]) Input() chan<- T {
+	return c.in
+}
+
+// Output returns the output channel.
+func (c *Channel[T]) Output() <-chan T {
+	return c.out
+}
+
+func (c *Channel[T]) run() { //nolint:gocyclo // Yes it's complex.
 	q := new(queue[T])
 	var inValue T
 	inOpen := true      // Indicates if the input channel is open.
@@ -63,54 +85,54 @@ func run[T any](in <-chan T, out chan<- T, sendAllOnClose bool) { //nolint:gocyc
 			if !outOK { // If there is no more value to send to the output channel.
 				return
 			}
-			if !sendAllOnClose { // If we don't need to send all remaining values to the output channel.
+			if !c.sendAllOnClose { // If we don't need to send all remaining values to the output channel.
 				return
 			}
-			out <- outValue // Send the remaining values to the output channel.
+			c.out <- outValue // Send the remaining values to the output channel.
 			outOK = false
 			continue
 		}
 		if !outOK { // If there is no value to send to the output channel.
-			inValue, inOpen = <-in // Try to receive a value from the input channel.
+			inValue, inOpen = <-c.in // Try to receive a value from the input channel.
 			inReceived = true
 			continue
 		}
 		select { // Try to send the value to the output channel, before receiving a value from the input channel.
-		case out <- outValue:
+		case c.out <- outValue:
 			outValue = zero
 			outOK = false
 			continue
 		default: // The output channel was not ready.
 		}
 		select { // Try to receive a value from the input channel.
-		case inValue, inOpen = <-in:
+		case inValue, inOpen = <-c.in:
 			inReceived = true
 			continue
 		default: // The input channel was not ready.
 		}
 		select { // Try to receive a value from the input channel, or send the value to the output channel.
-		case inValue, inOpen = <-in:
+		case inValue, inOpen = <-c.in:
 			inReceived = true
-		case out <- outValue:
+		case c.out <- outValue:
 			outValue = zero
 			outOK = false
 		}
 	}
 }
 
-func release[T any](in chan T, out chan T) {
+func (c *Channel[T]) release() {
 	inClosed := false
-	for !inClosed {
+	for !inClosed { // Drain the input channel, and wa
 		select {
-		case _, ok := <-in:
+		case _, ok := <-c.in:
 			if !ok {
 				inClosed = true
 			}
 		default:
-			close(in)
+			close(c.in)
 		}
 	}
-	for range out {
+	for range c.out {
 	}
 }
 

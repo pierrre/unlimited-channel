@@ -11,7 +11,8 @@ import (
 )
 
 func Example() {
-	in, out := New[int]()
+	c := New[int]()
+	in, out := c.Input(), c.Output()
 	in <- 1
 	in <- 2
 	v := <-out
@@ -27,16 +28,17 @@ func Example() {
 	// open: false
 }
 
-func newTestChannel(tb testing.TB, opts ...Option) (in chan<- int, out <-chan int) {
+func newTestChannel(tb testing.TB, opts ...Option) *Channel[int] {
 	tb.Helper()
 	var release func()
-	in, out = New[int](slices.Concat([]Option{withRelease(&release)}, opts)...)
+	c := New[int](slices.Concat([]Option{withRelease(&release)}, opts)...)
 	tb.Cleanup(release)
-	return in, out
+	return c
 }
 
 func Test(t *testing.T) {
-	in, out := newTestChannel(t, WithContext(t.Context()))
+	c := newTestChannel(t, WithContext(t.Context()))
+	in, out := c.Input(), c.Output()
 	in <- 1
 	in <- 2
 	v := <-out
@@ -54,7 +56,8 @@ func Test(t *testing.T) {
 }
 
 func TestCloseRemaining(t *testing.T) {
-	in, out := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(false))
+	c := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(false))
+	in, out := c.Input(), c.Output()
 	for range 10 {
 		in <- 1
 	}
@@ -67,7 +70,8 @@ func TestCloseRemaining(t *testing.T) {
 }
 
 func TestCloseSendAll(t *testing.T) {
-	in, out := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(true))
+	c := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(true))
+	in, out := c.Input(), c.Output()
 	for range 10 {
 		in <- 1
 	}
@@ -81,7 +85,8 @@ func TestCloseSendAll(t *testing.T) {
 
 func TestWithBuffer(t *testing.T) {
 	size := 1000
-	in, out := newTestChannel(t, WithBuffer(size))
+	c := newTestChannel(t, WithBuffer(size))
+	in, out := c.Input(), c.Output()
 	for range size {
 		in <- 1
 	}
@@ -94,7 +99,8 @@ func TestWithBuffer(t *testing.T) {
 }
 
 func TestWithBufferNegative(t *testing.T) {
-	in, out := newTestChannel(t, WithBuffer(-1))
+	c := newTestChannel(t, WithBuffer(-1))
+	in, out := c.Input(), c.Output()
 	in <- 1
 	close(in)
 	count := 0
@@ -105,19 +111,22 @@ func TestWithBufferNegative(t *testing.T) {
 }
 
 func TestSlowReceiver(t *testing.T) {
-	in, out := newTestChannel(t, WithBuffer(0))
+	c := newTestChannel(t, WithBuffer(0))
+	in, out := c.Input(), c.Output()
 	in <- 1
 	time.Sleep(1 * time.Millisecond)
 	<-out
 }
 
 func TestWithRelease(t *testing.T) {
-	in, _ := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(true))
+	c := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(true))
+	in := c.Input()
 	in <- 1
 }
 
 func Benchmark(b *testing.B) {
-	in, out := newTestChannel(b)
+	c := newTestChannel(b)
+	in, out := c.Input(), c.Output()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		in <- 1
@@ -129,7 +138,8 @@ func Benchmark(b *testing.B) {
 }
 
 func BenchmarkEmpty(b *testing.B) {
-	in, out := newTestChannel(b)
+	c := newTestChannel(b)
+	in, out := c.Input(), c.Output()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -140,7 +150,8 @@ func BenchmarkEmpty(b *testing.B) {
 }
 
 func BenchmarkEmptyNoBuffer(b *testing.B) {
-	in, out := newTestChannel(b, WithBuffer(0))
+	c := newTestChannel(b, WithBuffer(0))
+	in, out := c.Input(), c.Output()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -151,7 +162,8 @@ func BenchmarkEmptyNoBuffer(b *testing.B) {
 }
 
 func BenchmarkWithManyElements(b *testing.B) {
-	in, out := newTestChannel(b)
+	c := newTestChannel(b)
+	in, out := c.Input(), c.Output()
 	for range 10000 {
 		in <- 1
 	}
@@ -167,7 +179,8 @@ func BenchmarkWithManyElements(b *testing.B) {
 func BenchmarkWithBuffer(b *testing.B) {
 	for _, buffer := range []int{0, 1, 2, 4, 8, 16, 32, 64, 128} {
 		b.Run(strconv.Itoa(buffer), func(b *testing.B) {
-			in, out := newTestChannel(b, WithBuffer(buffer))
+			c := newTestChannel(b, WithBuffer(buffer))
+			in, out := c.Input(), c.Output()
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				in <- 1
