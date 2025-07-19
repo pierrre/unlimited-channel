@@ -22,6 +22,7 @@ type Channel[T any] struct {
 	out            chan T
 	sendAllOnClose bool
 	worker         *worker[T]
+	workerWait     goroutine.Waiter
 }
 
 // New creates a new [Channel].
@@ -43,7 +44,7 @@ func New[T any](opts ...Option) *Channel[T] {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	goroutine.Start(ctx, func(ctx context.Context) {
+	c.workerWait = goroutine.Start(ctx, func(ctx context.Context) {
 		defer close(c.out)
 		c.worker.run()
 	})
@@ -68,6 +69,11 @@ func (c *Channel[T]) Len() int {
 	return l
 }
 
+// Wait waits for the worker to finish processing.
+func (c *Channel[T]) Wait() {
+	c.workerWait.Wait()
+}
+
 func (c *Channel[T]) release() {
 	inOpen := true
 	for inOpen { // Drain the input channel, and ensure it is closed.
@@ -79,6 +85,7 @@ func (c *Channel[T]) release() {
 	}
 	for range c.out { // Drain the output channel until it is closed.
 	}
+	c.Wait()
 }
 
 type worker[T any] struct {
