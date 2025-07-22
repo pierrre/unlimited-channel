@@ -1,19 +1,22 @@
 package unlimitedchannel
 
-import (
-	"github.com/pierrre/go-libs/syncutil"
-)
+const queuePoolMaxSize = 1000
 
 type queue[T any] struct {
 	head *queueElement[T]
 	tail *queueElement[T]
 
-	elemPool syncutil.Pool[*queueElement[T]]
+	elemPool []*queueElement[T]
 }
 
 func (q *queue[T]) enqueue(value T) {
-	newElem := q.elemPool.Get()
-	if newElem == nil {
+	var newElem *queueElement[T]
+	lp := len(q.elemPool)
+	if lp > 0 {
+		newElem = q.elemPool[lp-1]
+		q.elemPool[lp-1] = nil
+		q.elemPool = q.elemPool[:lp-1]
+	} else {
 		newElem = &queueElement[T]{}
 	}
 	newElem.value = value
@@ -40,7 +43,9 @@ func (q *queue[T]) dequeue() (T, bool) {
 	var zero T
 	oldElem.value = zero
 	oldElem.next = nil
-	q.elemPool.Put(oldElem)
+	if len(q.elemPool) < queuePoolMaxSize {
+		q.elemPool = append(q.elemPool, oldElem)
+	}
 	return value, true
 }
 

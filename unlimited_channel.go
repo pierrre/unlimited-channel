@@ -20,9 +20,15 @@ import (
 type Channel[T any] struct {
 	in             chan T
 	out            chan T
+	len            atomic.Int64
+	inClosed       atomic.Bool
+	inClosedNotify chan struct{}
+	inWait         goroutine.Waiter
+	outWait        goroutine.Waiter
 	sendAllOnClose bool
-	worker         *worker[T]
-	workerWait     goroutine.Waiter
+
+	cond  sync.Cond
+	queue queue[T]
 }
 
 // New creates a new [Channel].
@@ -32,21 +38,21 @@ func New[T any](opts ...Option) *Channel[T] {
 	c := &Channel[T]{
 		in:             make(chan T, buffer),
 		out:            make(chan T, buffer),
+		inClosedNotify: make(chan struct{}),
 		sendAllOnClose: o.sendAllOnClose,
 	}
-	c.worker = newWorker(c)
+	c.cond.L = new(sync.Mutex)
 	if o.release != nil {
 		*o.release = sync.OnceFunc(func() {
 			c.release()
 		})
 	}
-	ctx := o.context
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	c.workerWait = goroutine.Start(ctx, func(ctx context.Context) {
-		defer close(c.out)
-		c.worker.run()
+	ctx := context.Background()
+	c.inWait = goroutine.Start(ctx, func(ctx context.Context) {
+		c.runInput()
+	})
+	c.outWait = goroutine.Start(ctx, func(ctx context.Context) {
+		c.runOutput()
 	})
 	return c
 }
@@ -62,122 +68,93 @@ func (c *Channel[T]) Output() <-chan T {
 }
 
 // Len returns the length of the channel.
+//
+// It's not guaranteed to be accurate.
+// The value will eventually stabilize to the real value.
 func (c *Channel[T]) Len() int {
-	l := len(c.out)
-	l += c.worker.len()
-	l += len(c.in)
-	return l
+	return len(c.out) + int(c.len.Load()) + len(c.in)
 }
 
-// Wait waits for the worker to finish processing.
+// Wait waits for the resources to be released.
 func (c *Channel[T]) Wait() {
-	c.workerWait.Wait()
+	c.inWait.Wait()
+	c.outWait.Wait()
 }
 
 func (c *Channel[T]) release() {
 	inOpen := true
-	for inOpen { // Drain the input channel, and ensure it is closed.
+	for inOpen {
 		select {
 		case _, inOpen = <-c.in:
 		default:
 			close(c.in)
 		}
 	}
-	for range c.out { // Drain the output channel until it is closed.
+	for range c.out {
 	}
 	c.Wait()
 }
 
-type worker[T any] struct {
-	channel *Channel[T]
-	length  int64
-}
-
-func newWorker[T any](c *Channel[T]) *worker[T] {
-	return &worker[T]{
-		channel: c,
+func (c *Channel[T]) runInput() {
+	for v := range c.in {
+		c.len.Add(1)
+		c.cond.L.Lock()
+		c.queue.enqueue(v)
+		c.cond.L.Unlock()
+		c.cond.Signal()
 	}
+	c.inClosed.Store(true)
+	close(c.inClosedNotify)
+	c.cond.Signal()
 }
 
-func (w *worker[T]) len() int {
-	return int(atomic.LoadInt64(&w.length))
-}
-
-func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
-	q := new(queue[T])
-	in := w.channel.in
-	var inValue T
-	inOpen := true      // Indicates if the input channel is open.
-	inReceived := false // Indicate if the input channel received something (a value or closed).
-	out := w.channel.out
-	var outValue T
-	outValueOK := false // Indicates if the output value is set.
-	outSent := false    // Indicates if the output value was sent to the output channel.
-	pLength := &w.length
-	sendAllOnClose := w.channel.sendAllOnClose
+//nolint:gocyclo // Yes it's complex.
+func (c *Channel[T]) runOutput() {
+	defer close(c.out)
+	var v T
+	var ok bool
 	var zero T
 	for {
-		if outSent { // If the output value was sent to the output channel.
-			outSent = false
-			outValue = zero // Reset the output value.
-			outValueOK = false
-			atomic.AddInt64(pLength, -1)
+		if c.inClosed.Load() && !c.sendAllOnClose {
+			return
 		}
-		if inReceived { // If the input channel received something (a value or closed).
-			inReceived = false
-			if inOpen { // If the input channel is open, a value was received.
-				if !outValueOK { // If the output value is not set.
-					outValue = inValue // Set the output value with the input value, without adding it to the queue.
-					outValueOK = true
-				} else {
-					q.enqueue(inValue) // Add the input value to the queue.
+		if !ok {
+			c.cond.L.Lock()
+			for {
+				v, ok = c.queue.dequeue()
+				if ok {
+					break
 				}
-				inValue = zero
-				atomic.AddInt64(pLength, 1)
+				if c.inClosed.Load() {
+					break
+				}
+				c.cond.Wait()
 			}
-		}
-		if !outValueOK { // If the output value is not set.
-			outValue, outValueOK = q.dequeue() // Try to get a value from the queue.
-		}
-		if !inOpen { // If the input channel is closed.
-			if !outValueOK { // If there is no more value to send to the output channel.
+			c.cond.L.Unlock()
+			if !ok {
 				return
 			}
-			if !sendAllOnClose { // If we don't need to send all remaining values to the output channel.
-				return
+		}
+		if c.inClosed.Load() {
+			c.out <- v
+		} else {
+			select {
+			case c.out <- v:
+			default:
+				select {
+				case c.out <- v:
+				case <-c.inClosedNotify:
+					continue
+				}
 			}
-			out <- outValue // Send the remaining values to the output channel.
-			outSent = true
-			continue
 		}
-		if !outValueOK { // If there is no value to send to the output channel.
-			inValue, inOpen = <-in // Try to receive a value from the input channel.
-			inReceived = true
-			continue
-		}
-		select { // Try to send the value to the output channel, before receiving a value from the input channel.
-		case out <- outValue:
-			outSent = true
-			continue
-		default: // The output channel was not ready.
-		}
-		select { // Try to receive a value from the input channel.
-		case inValue, inOpen = <-in:
-			inReceived = true
-			continue
-		default: // The input channel was not ready.
-		}
-		select { // Try to receive a value from the input channel, or send the value to the output channel.
-		case inValue, inOpen = <-in:
-			inReceived = true
-		case out <- outValue:
-			outSent = true
-		}
+		v = zero
+		ok = false
+		c.len.Add(-1)
 	}
 }
 
 type options struct {
-	context        context.Context //nolint:containedctx // It's OK.
 	sendAllOnClose bool
 	buffer         int
 	release        *func()
@@ -195,16 +172,6 @@ func buildOptions(opts []Option) *options {
 
 // Option represents an option for [New].
 type Option func(*options)
-
-// WithContext sets the [context.Context] for the channel.
-// It's used to run the goroutine that handles the channel.
-// Cancelling the context has no effect on the channel.
-// It uses [context.Background] by default.
-func WithContext(ctx context.Context) Option {
-	return func(o *options) {
-		o.context = ctx
-	}
-}
 
 // WithSendAllOnClose sets the option to send all remaining values before closing the output channel.
 // The default value is false, which means that the output channel will be closed as soon as the input channel is closed, without sending the remaining values.

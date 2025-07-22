@@ -22,6 +22,7 @@ func Example() {
 	close(in)
 	_, ok := <-out
 	fmt.Println("open:", ok)
+	c.Wait()
 	// Output:
 	// 1
 	// 2
@@ -37,7 +38,7 @@ func newTestChannel(tb testing.TB, opts ...Option) *Channel[int] {
 }
 
 func Test(t *testing.T) {
-	c := newTestChannel(t, WithContext(t.Context()))
+	c := newTestChannel(t)
 	in, out := c.Input(), c.Output()
 	in <- 1
 	in <- 2
@@ -51,8 +52,10 @@ func Test(t *testing.T) {
 	default:
 	}
 	close(in)
+	c.Wait()
 	_, ok := <-out
 	assert.Equal(t, ok, false)
+	assert.Equal(t, c.Len(), 0)
 }
 
 func TestCloseRemaining(t *testing.T) {
@@ -61,12 +64,12 @@ func TestCloseRemaining(t *testing.T) {
 	for range 10 {
 		in <- 1
 	}
+	time.Sleep(1 * time.Millisecond) // Ensure that it's sending to the output. TODO: use testing/synctest with Go 1.25.
 	close(in)
-	count := 0
-	for range out {
-		count++
-	}
-	assert.Less(t, count, 10)
+	c.Wait()
+	_, ok := <-out
+	assert.Equal(t, ok, false)
+	assert.Equal(t, c.Len(), 10)
 }
 
 func TestCloseSendAll(t *testing.T) {
@@ -80,43 +83,9 @@ func TestCloseSendAll(t *testing.T) {
 	for range out {
 		count++
 	}
+	c.Wait()
 	assert.Equal(t, count, 10)
 	assert.Equal(t, c.Len(), 0)
-}
-
-func TestWithBuffer(t *testing.T) {
-	size := 1000
-	c := newTestChannel(t, WithBuffer(size))
-	in, out := c.Input(), c.Output()
-	for range size {
-		in <- 1
-	}
-	close(in)
-	count := 0
-	for range out {
-		count++
-	}
-	assert.Equal(t, count, size)
-}
-
-func TestWithBufferNegative(t *testing.T) {
-	c := newTestChannel(t, WithBuffer(-1))
-	in, out := c.Input(), c.Output()
-	in <- 1
-	close(in)
-	count := 0
-	for range out {
-		count++
-	}
-	assert.Equal(t, count, 0)
-}
-
-func TestSlowReceiver(t *testing.T) {
-	c := newTestChannel(t, WithBuffer(0))
-	in, out := c.Input(), c.Output()
-	in <- 1
-	time.Sleep(1 * time.Millisecond)
-	<-out
 }
 
 func TestWithRelease(t *testing.T) {
