@@ -4,7 +4,6 @@ package unlimitedchannel
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pierrre/go-libs/goroutine"
 )
@@ -20,9 +19,14 @@ import (
 type Channel[T any] struct {
 	in             chan T
 	out            chan T
+	cond           sync.Cond
+	queue          queue[T]
+	len            int
+	inClosed       bool
+	inClosedNotify chan struct{}
+	inWait         goroutine.Waiter
+	outWait        goroutine.Waiter
 	sendAllOnClose bool
-	worker         *worker[T]
-	workerWait     goroutine.Waiter
 }
 
 // New creates a new [Channel].
@@ -32,9 +36,10 @@ func New[T any](opts ...Option) *Channel[T] {
 	c := &Channel[T]{
 		in:             make(chan T, buffer),
 		out:            make(chan T, buffer),
+		inClosedNotify: make(chan struct{}),
 		sendAllOnClose: o.sendAllOnClose,
 	}
-	c.worker = newWorker(c)
+	c.cond.L = new(sync.Mutex)
 	if o.release != nil {
 		*o.release = sync.OnceFunc(func() {
 			c.release()
@@ -44,9 +49,11 @@ func New[T any](opts ...Option) *Channel[T] {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	c.workerWait = goroutine.Start(ctx, func(ctx context.Context) {
-		defer close(c.out)
-		c.worker.run()
+	c.inWait = goroutine.Start(ctx, func(ctx context.Context) {
+		c.runInput()
+	})
+	c.outWait = goroutine.Start(ctx, func(ctx context.Context) {
+		c.runOutput()
 	})
 	return c
 }
@@ -63,15 +70,15 @@ func (c *Channel[T]) Output() <-chan T {
 
 // Len returns the length of the channel.
 func (c *Channel[T]) Len() int {
-	l := len(c.out)
-	l += c.worker.len()
-	l += len(c.in)
-	return l
+	c.cond.L.Lock()
+	defer c.cond.L.Unlock()
+	return len(c.out) + c.len + len(c.in)
 }
 
 // Wait waits for the worker to finish processing.
 func (c *Channel[T]) Wait() {
-	c.workerWait.Wait()
+	c.inWait.Wait()
+	c.outWait.Wait()
 }
 
 func (c *Channel[T]) release() {
@@ -88,92 +95,43 @@ func (c *Channel[T]) release() {
 	c.Wait()
 }
 
-type worker[T any] struct {
-	channel *Channel[T]
-	length  int64
-}
-
-func newWorker[T any](c *Channel[T]) *worker[T] {
-	return &worker[T]{
-		channel: c,
+func (c *Channel[T]) runInput() {
+	for v := range c.in {
+		c.cond.L.Lock()
+		c.len++
+		c.queue.enqueue(v)
+		c.cond.Signal()
+		c.cond.L.Unlock()
 	}
+	c.cond.L.Lock()
+	c.inClosed = true
+	c.cond.Signal()
+	c.cond.L.Unlock()
 }
 
-func (w *worker[T]) len() int {
-	return int(atomic.LoadInt64(&w.length))
-}
-
-func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
-	q := new(queue[T])
-	in := w.channel.in
-	var inValue T
-	inOpen := true      // Indicates if the input channel is open.
-	inReceived := false // Indicate if the input channel received something (a value or closed).
-	out := w.channel.out
-	var outValue T
-	outValueOK := false // Indicates if the output value is set.
-	outSent := false    // Indicates if the output value was sent to the output channel.
-	pLength := &w.length
-	sendAllOnClose := w.channel.sendAllOnClose
-	var zero T
+func (c *Channel[T]) runOutput() {
+	defer close(c.out)
 	for {
-		if outSent { // If the output value was sent to the output channel.
-			outSent = false
-			outValue = zero // Reset the output value.
-			outValueOK = false
-			atomic.AddInt64(pLength, -1)
-		}
-		if inReceived { // If the input channel received something (a value or closed).
-			inReceived = false
-			if inOpen { // If the input channel is open, a value was received.
-				if !outValueOK { // If the output value is not set.
-					outValue = inValue // Set the output value with the input value, without adding it to the queue.
-					outValueOK = true
-				} else {
-					q.enqueue(inValue) // Add the input value to the queue.
-				}
-				inValue = zero
-				atomic.AddInt64(pLength, 1)
-			}
-		}
-		if !outValueOK { // If the output value is not set.
-			outValue, outValueOK = q.dequeue() // Try to get a value from the queue.
-		}
-		if !inOpen { // If the input channel is closed.
-			if !outValueOK { // If there is no more value to send to the output channel.
-				return
-			}
-			if !sendAllOnClose { // If we don't need to send all remaining values to the output channel.
-				return
-			}
-			out <- outValue // Send the remaining values to the output channel.
-			outSent = true
-			continue
-		}
-		if !outValueOK { // If there is no value to send to the output channel.
-			inValue, inOpen = <-in // Try to receive a value from the input channel.
-			inReceived = true
-			continue
-		}
-		select { // Try to send the value to the output channel, before receiving a value from the input channel.
-		case out <- outValue:
-			outSent = true
-			continue
-		default: // The output channel was not ready.
-		}
-		select { // Try to receive a value from the input channel.
-		case inValue, inOpen = <-in:
-			inReceived = true
-			continue
-		default: // The input channel was not ready.
-		}
-		select { // Try to receive a value from the input channel, or send the value to the output channel.
-		case inValue, inOpen = <-in:
-			inReceived = true
-		case out <- outValue:
-			outSent = true
-		}
 	}
+}
+
+func (c *Channel[T]) getFromQueue() (v T, ok bool) {
+	c.cond.L.Lock()
+	defer c.cond.L.Unlock()
+	for {
+		if c.inClosed {
+			return v, false
+		}
+		v, ok = c.queue.dequeue()
+		if ok {
+			return v, true
+		}
+		c.cond.Wait()
+	}
+}
+
+func (c *Channel[T]) sendToOutput(v T) bool {
+
 }
 
 type options struct {
