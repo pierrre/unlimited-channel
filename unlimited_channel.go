@@ -21,8 +21,8 @@ type Channel[T any] struct {
 	in             chan T
 	out            chan T
 	sendAllOnClose bool
-	worker         *worker[T]
-	workerWait     goroutine.Waiter
+	length         atomic.Int64
+	wait           goroutine.Waiter
 }
 
 // New creates a new [Channel].
@@ -34,7 +34,6 @@ func New[T any](opts ...Option) *Channel[T] {
 		out:            make(chan T, buffer),
 		sendAllOnClose: o.sendAllOnClose,
 	}
-	c.worker = newWorker(c)
 	if o.release != nil {
 		*o.release = sync.OnceFunc(func() {
 			c.release()
@@ -44,9 +43,9 @@ func New[T any](opts ...Option) *Channel[T] {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	c.workerWait = goroutine.Start(ctx, func(ctx context.Context) {
+	c.wait = goroutine.Start(ctx, func(ctx context.Context) {
 		defer close(c.out)
-		c.worker.run()
+		c.run()
 	})
 	return c
 }
@@ -64,14 +63,14 @@ func (c *Channel[T]) Output() <-chan T {
 // Len returns the length of the channel.
 func (c *Channel[T]) Len() int {
 	l := len(c.out)
-	l += c.worker.len()
+	l += int(c.length.Load())
 	l += len(c.in)
 	return l
 }
 
 // Wait waits for the worker to finish processing.
 func (c *Channel[T]) Wait() {
-	c.workerWait.Wait()
+	c.wait.Wait()
 }
 
 func (c *Channel[T]) release() {
@@ -88,40 +87,24 @@ func (c *Channel[T]) release() {
 	c.Wait()
 }
 
-type worker[T any] struct {
-	channel *Channel[T]
-	length  int64
-}
-
-func newWorker[T any](c *Channel[T]) *worker[T] {
-	return &worker[T]{
-		channel: c,
-	}
-}
-
-func (w *worker[T]) len() int {
-	return int(atomic.LoadInt64(&w.length))
-}
-
-func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
+func (c *Channel[T]) run() { //nolint:gocyclo // Yes it's complex.
 	q := new(queue[T])
-	in := w.channel.in
+	in := c.in
 	var inValue T
 	inOpen := true      // Indicates if the input channel is open.
 	inReceived := false // Indicate if the input channel received something (a value or closed).
-	out := w.channel.out
+	out := c.out
 	var outValue T
 	outValueOK := false // Indicates if the output value is set.
 	outSent := false    // Indicates if the output value was sent to the output channel.
-	pLength := &w.length
-	sendAllOnClose := w.channel.sendAllOnClose
+	sendAllOnClose := c.sendAllOnClose
 	var zero T
 	for {
 		if outSent { // If the output value was sent to the output channel.
 			outSent = false
 			outValue = zero // Reset the output value.
 			outValueOK = false
-			atomic.AddInt64(pLength, -1)
+			c.length.Add(-1)
 		}
 		if inReceived { // If the input channel received something (a value or closed).
 			inReceived = false
@@ -133,7 +116,7 @@ func (w *worker[T]) run() { //nolint:gocyclo // Yes it's complex.
 					q.enqueue(inValue) // Add the input value to the queue.
 				}
 				inValue = zero
-				atomic.AddInt64(pLength, 1)
+				c.length.Add(1)
 			}
 		}
 		if !outValueOK { // If the output value is not set.
