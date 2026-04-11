@@ -9,11 +9,11 @@ import (
 	"github.com/pierrre/go-libs/goroutine"
 )
 
-// Channel is a channel with unlimited capacity
+// Channel is a channel with unlimited capacity.
 // It stores values in an in-memory queue.
 // Sending values to the input channel is non-blocking.
 //
-// The input channel must be closed, in order to release resources.
+// The input channel must be closed to release resources.
 // The output channel will be closed when all the resources have been released.
 //
 // It must be created with [New].
@@ -91,12 +91,12 @@ func (c *Channel[T]) run() { //nolint:gocyclo // Yes it's complex.
 	q := new(queue[T])
 	in := c.in
 	var inValue T
-	inOpen := true      // Indicates if the input channel is open.
-	inReceived := false // Indicate if the input channel received something (a value or closed).
+	inOpen := true      // Indicates whether the input channel is open.
+	inReceived := false // Indicates whether the input channel received something (a value or close event).
 	out := c.out
 	var outValue T
-	outValueOK := false // Indicates if the output value is set.
-	outSent := false    // Indicates if the output value was sent to the output channel.
+	outValueOK := false // Indicates whether the output value is set.
+	outSent := false    // Indicates whether the output value was sent to the output channel.
 	sendAllOnClose := c.sendAllOnClose
 	var zero T
 	for {
@@ -180,7 +180,7 @@ func buildOptions(opts []Option) *options {
 type Option func(*options)
 
 // WithContext sets the [context.Context] for the channel.
-// It's used to run the goroutine that handles the channel.
+// It runs the goroutine that handles the channel.
 // Cancelling the context has no effect on the channel.
 // It uses [context.Background] by default.
 func WithContext(ctx context.Context) Option {
@@ -190,8 +190,9 @@ func WithContext(ctx context.Context) Option {
 }
 
 // WithSendAllOnClose sets the option to send all remaining values before closing the output channel.
-// The default value is false, which means that the output channel will be closed as soon as the input channel is closed, without sending the remaining values.
-// If true, all values from the output channel must be read until it is closed, in order to release resources.
+// The default value is false.
+// In that case, the output channel is closed as soon as the input channel is closed, without sending the remaining values.
+// If true, all values from the output channel must be read until it is closed to release resources.
 func WithSendAllOnClose(send bool) Option {
 	return func(o *options) {
 		o.sendAllOnClose = send
@@ -199,7 +200,7 @@ func WithSendAllOnClose(send bool) Option {
 }
 
 // WithBuffer sets the buffer size of the input/output channels.
-// The default value is 100, and offers better performance than 0 (unbuffered).
+// The default value is 100, which usually performs better than 0 (unbuffered).
 // A negative value is equivalent to 0.
 func WithBuffer(buffer int) Option {
 	return func(o *options) {
