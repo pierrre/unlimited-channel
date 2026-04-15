@@ -2,9 +2,9 @@ package unlimitedchannel
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pierrre/assert"
@@ -19,7 +19,7 @@ func Example() {
 	fmt.Println(v)
 	v = <-out
 	fmt.Println(v)
-	close(in)
+	c.Close()
 	_, ok := <-out
 	fmt.Println("open:", ok)
 	// Output:
@@ -30,9 +30,8 @@ func Example() {
 
 func newTestChannel(tb testing.TB, opts ...Option) *Channel[int] {
 	tb.Helper()
-	var release func()
-	c := New[int](slices.Concat([]Option{withRelease(&release)}, opts)...)
-	tb.Cleanup(release)
+	c := New[int](opts...)
+	tb.Cleanup(c.Close)
 	return c
 }
 
@@ -50,27 +49,27 @@ func Test(t *testing.T) {
 		t.Fatal("should not be here")
 	default:
 	}
-	close(in)
+	c.Close()
 	_, ok := <-out
-	assert.Equal(t, ok, false)
+	assert.False(t, ok)
 }
 
-func TestCloseRemaining(t *testing.T) {
-	c := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(false))
+func TestCloseDiscard(t *testing.T) {
+	c := newTestChannel(t, WithBuffer(0))
 	in, out := c.Input(), c.Output()
 	for range 10 {
 		in <- 1
 	}
-	close(in)
+	c.Close()
 	count := 0
 	for range out {
 		count++
 	}
-	assert.Less(t, count, 10)
+	assert.Zero(t, count)
 }
 
 func TestCloseSendAll(t *testing.T) {
-	c := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(true))
+	c := newTestChannel(t, WithBuffer(0))
 	in, out := c.Input(), c.Output()
 	for range 10 {
 		in <- 1
@@ -99,30 +98,14 @@ func TestWithBuffer(t *testing.T) {
 	assert.Equal(t, count, size)
 }
 
-func TestWithBufferNegative(t *testing.T) {
-	c := newTestChannel(t, WithBuffer(-1))
-	in, out := c.Input(), c.Output()
-	in <- 1
-	close(in)
-	count := 0
-	for range out {
-		count++
-	}
-	assert.Equal(t, count, 0)
-}
-
 func TestSlowReceiver(t *testing.T) {
-	c := newTestChannel(t, WithBuffer(0))
-	in, out := c.Input(), c.Output()
-	in <- 1
-	time.Sleep(1 * time.Millisecond)
-	<-out
-}
-
-func TestWithRelease(t *testing.T) {
-	c := newTestChannel(t, WithBuffer(0), WithSendAllOnClose(true))
-	in := c.Input()
-	in <- 1
+	synctest.Test(t, func(t *testing.T) {
+		c := newTestChannel(t, WithBuffer(0))
+		in, out := c.Input(), c.Output()
+		in <- 1
+		time.Sleep(1 * time.Second)
+		<-out
+	})
 }
 
 func Benchmark(b *testing.B) {
