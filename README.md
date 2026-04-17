@@ -6,7 +6,7 @@ Go channel with unlimited capacity.
 
 > Why ?
 
-I wanted to know if it was possible to implement an channel with unlimited capacity.
+I wanted to know if it was possible to implement a channel with unlimited capacity.
 
 > Should you use it / Is it useful ?
 

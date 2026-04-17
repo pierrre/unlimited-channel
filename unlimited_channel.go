@@ -35,7 +35,7 @@ func New[T any](opts ...Option) *Channel[T] {
 
 // Input returns the input channel.
 //
-// Closing the input channel notifies the channel that no more value will be sent, and it should release resources when all values are sent to the output channel.
+// Closing the input channel notifies the channel that no more values will be sent, and it should release resources when all values are sent to the output channel.
 // However calling [Channel.Close] is still required to release resources.
 func (c *Channel[T]) Input() chan<- T {
 	return c.in
