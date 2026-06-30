@@ -4,14 +4,14 @@ Go channel with unlimited capacity.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/pierrre/unlimited-channel.svg)](https://pkg.go.dev/github.com/pierrre/unlimited-channel)
 
-> Why ?
+> Why?
 
 I wanted to know if it was possible to implement a channel with unlimited capacity.
 
-> Should you use it / Is it useful ?
+> Should you use it / Is it useful?
 
 No, but [here is an example](https://pkg.go.dev/github.com/pierrre/unlimited-channel#example-package).
 
-> What about performance ?
+> What about performance?
 
 It's slower than a normal channel.
