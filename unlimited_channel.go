@@ -3,6 +3,7 @@ package unlimitedchannel
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pierrre/go-libs/goroutine"
@@ -13,10 +14,11 @@ import (
 //
 // It must be created with [New], and closed with [Channel.Close] to release resources.
 type Channel[T any] struct {
-	in     chan T
-	out    chan T
-	length atomic.Int64
-	wait   func()
+	in        chan T
+	out       chan T
+	length    atomic.Int64
+	closeOnce sync.Once
+	wait      func()
 }
 
 // New creates a new [Channel].
@@ -61,18 +63,21 @@ func (c *Channel[T]) Len() int {
 // Close closes the channel.
 //
 // It releases all resources used by the channel: buffered values are discarded, and the input/output channels are closed.
+// It is safe for concurrent callers: only the first call releases resources, and subsequent calls block until the first returns.
 func (c *Channel[T]) Close() {
-	inOpen := true
-	for inOpen { // Drain the input channel, and ensure it is closed.
-		select {
-		case _, inOpen = <-c.in:
-		default:
-			close(c.in)
+	c.closeOnce.Do(func() {
+		inOpen := true
+		for inOpen { // Drain the input channel, and ensure it is closed.
+			select {
+			case _, inOpen = <-c.in:
+			default:
+				close(c.in)
+			}
 		}
-	}
-	for range c.out { // Drain the output channel until it is closed.
-	}
-	c.wait()
+		for range c.out { // Drain the output channel until it is closed.
+		}
+		c.wait()
+	})
 }
 
 func (c *Channel[T]) run() { //nolint:gocyclo // Yes it's complex.

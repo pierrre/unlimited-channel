@@ -3,6 +3,7 @@ package unlimitedchannel
 import (
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -51,6 +52,19 @@ func Test(t *testing.T) {
 	}
 	c.Close()
 	_, ok := <-out
+	assert.False(t, ok)
+}
+
+func TestCloseConcurrent(t *testing.T) {
+	c := newTestChannel(t, WithBuffer(0))
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Go(func() {
+			c.Close()
+		})
+	}
+	wg.Wait()
+	_, ok := <-c.Output()
 	assert.False(t, ok)
 }
 
