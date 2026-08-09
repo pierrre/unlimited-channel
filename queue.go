@@ -17,6 +17,7 @@ func (q *queue[T]) enqueue(value T) {
 		newElem = &queueElement[T]{}
 	}
 	newElem.value = value
+	newElem.next = nil
 	if q.head == nil {
 		q.head = newElem
 	}
