@@ -163,9 +163,8 @@ func buildOptions(opts []Option) *options {
 // Option represents an option for [New].
 type Option func(*options)
 
-// WithContext sets the [context.Context] for the channel.
-// It runs the goroutine that handles the channel.
-// Cancelling the context has no effect on the channel.
+// WithContext sets the [context.Context] of the internal goroutine that handles the channel.
+// Cancelling the context does not stop the goroutine: it only exits when [Channel.Close] is called, or when the input channel is closed.
 // It uses [context.Background] by default.
 func WithContext(ctx context.Context) Option {
 	return func(o *options) {

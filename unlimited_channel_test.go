@@ -1,6 +1,7 @@
 package unlimitedchannel
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -105,6 +106,22 @@ func TestSlowReceiver(t *testing.T) {
 		in <- 1
 		time.Sleep(1 * time.Second)
 		<-out
+	})
+}
+
+func TestWithContextCancel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		c := newTestChannel(t, WithContext(ctx))
+		in, out := c.Input(), c.Output()
+		in <- 1
+		cancel()
+		time.Sleep(1 * time.Second)
+		v := <-out
+		assert.Equal(t, v, 1)
+		in <- 2
+		v = <-out
+		assert.Equal(t, v, 2)
 	})
 }
 
